@@ -1,4 +1,4 @@
-// 인증 시스템 클래스
+// 인증 시스템 클래스 (Firebase Authentication 사용)
 class AuthSystem {
     constructor() {
         this.isLoginMode = true;
@@ -6,30 +6,50 @@ class AuthSystem {
         this.init();
     }
 
-    init() {
-        // 로컬 스토리지에서 사용자 데이터 초기화 (없으면 빈 객체)
-        if (!localStorage.getItem('chessUsers')) {
-            localStorage.setItem('chessUsers', JSON.stringify({}));
-        }
+    async init() {
+        // Firebase가 로드될 때까지 대기
+        await this.waitForFirebase();
 
-        // 저장된 세션 확인
-        const session = localStorage.getItem('chessSession');
-        if (session) {
-            try {
-                const userData = JSON.parse(session);
-                if (this.validateSession(userData)) {
-                    this.currentUser = userData;
+        // Firebase 인증 상태 리스너 설정
+        if (window.auth) {
+            window.auth.onAuthStateChanged((user) => {
+                if (user) {
+                    // 사용자가 로그인되어 있음
+                    this.currentUser = {
+                        uid: user.uid,
+                        email: user.email,
+                        displayName: user.displayName || user.email.split('@')[0]
+                    };
                     this.showGame();
-                    return;
+                } else {
+                    // 사용자가 로그아웃되어 있음
+                    this.currentUser = null;
+                    this.showLoginModal();
                 }
-            } catch (e) {
-                localStorage.removeItem('chessSession');
-            }
+            });
+        } else {
+            // Firebase가 아직 로드되지 않았으면 모달 표시
+            this.showLoginModal();
         }
 
-        // 로그인 모달 표시
-        this.showLoginModal();
         this.setupEventListeners();
+    }
+
+    waitForFirebase() {
+        return new Promise((resolve) => {
+            const checkFirebase = setInterval(() => {
+                if (window.auth && window.db) {
+                    clearInterval(checkFirebase);
+                    resolve();
+                }
+            }, 100);
+            
+            // 최대 5초 대기
+            setTimeout(() => {
+                clearInterval(checkFirebase);
+                resolve();
+            }, 5000);
+        });
     }
 
     setupEventListeners() {
@@ -61,12 +81,12 @@ class AuthSystem {
         });
 
         // 폼 제출
-        authForm.addEventListener('submit', (e) => {
+        authForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (this.isLoginMode) {
-                this.login();
+                await this.login();
             } else {
-                this.register();
+                await this.register();
             }
         });
 
@@ -94,7 +114,7 @@ class AuthSystem {
         if (this.isLoginMode) {
             modalTitle.textContent = '로그인';
             submitBtn.textContent = '로그인';
-            switchText.innerHTML = '계정이 없으신가요? <a href="#" id="switch-link">회원가입</a>';
+            switchText.innerHTML = '계정이 없어요? <a href="#" id="switch-link">회원가입</a>';
             confirmPasswordGroup.style.display = 'none';
             document.getElementById('confirm-password').required = false;
         } else {
@@ -112,30 +132,19 @@ class AuthSystem {
         });
     }
 
-    hashPassword(password) {
-        // 간단한 해시 함수 (실제 프로덕션에서는 더 강력한 해싱 사용 권장)
-        let hash = 0;
-        for (let i = 0; i < password.length; i++) {
-            const char = password.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash; // 32비트 정수로 변환
-        }
-        return hash.toString();
-    }
-
-    register() {
-        const username = document.getElementById('username').value.trim();
+    async register() {
+        const email = document.getElementById('email').value.trim();
         const password = document.getElementById('password').value;
         const confirmPassword = document.getElementById('confirm-password').value;
 
         // 유효성 검사
-        if (!username || username.length < 3) {
-            this.showError('사용자명은 최소 3자 이상이어야 합니다.');
+        if (!email || !this.isValidEmail(email)) {
+            this.showError('올바른 이메일 주소를 입력해주세요.');
             return;
         }
 
-        if (!password || password.length < 4) {
-            this.showError('비밀번호는 최소 4자 이상이어야 합니다.');
+        if (!password || password.length < 6) {
+            this.showError('비밀번호는 최소 6자 이상이어야 합니다.');
             return;
         }
 
@@ -144,93 +153,121 @@ class AuthSystem {
             return;
         }
 
-        // 사용자 데이터 가져오기
-        const users = JSON.parse(localStorage.getItem('chessUsers'));
+        try {
+            // Firebase SDK 동적 로드
+            const { createUserWithEmailAndPassword } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js");
+            
+            // Firebase 회원가입
+            const userCredential = await createUserWithEmailAndPassword(window.auth, email, password);
+            const user = userCredential.user;
 
-        // 중복 확인
-        if (users[username]) {
-            this.showError('이미 존재하는 사용자명입니다.');
-            return;
+            // 사용자 통계 초기화 (Firestore에 저장)
+            await this.initializeUserStats(user.uid);
+
+            this.showSuccess('회원가입이 완료되었습니다!');
+            
+            // onAuthStateChanged가 자동으로 호출되어 게임 화면 표시
+        } catch (error) {
+            let errorMessage = '회원가입 중 오류가 발생했습니다.';
+            
+            switch (error.code) {
+                case 'auth/email-already-in-use':
+                    errorMessage = '이미 사용 중인 이메일입니다.';
+                    break;
+                case 'auth/invalid-email':
+                    errorMessage = '올바른 이메일 주소를 입력해주세요.';
+                    break;
+                case 'auth/weak-password':
+                    errorMessage = '비밀번호가 너무 약합니다.';
+                    break;
+                default:
+                    errorMessage = error.message || errorMessage;
+            }
+            
+            this.showError(errorMessage);
         }
-
-        // 새 사용자 등록
-        users[username] = {
-            username: username,
-            passwordHash: this.hashPassword(password),
-            createdAt: new Date().toISOString()
-        };
-
-        localStorage.setItem('chessUsers', JSON.stringify(users));
-
-        // 자동 로그인
-        this.currentUser = {
-            username: username,
-            loginTime: new Date().toISOString()
-        };
-        localStorage.setItem('chessSession', JSON.stringify(this.currentUser));
-
-        this.showSuccess('회원가입이 완료되었습니다!');
-        setTimeout(() => {
-            this.showGame();
-        }, 500);
     }
 
-    login() {
-        const username = document.getElementById('username').value.trim();
+    async login() {
+        const email = document.getElementById('email').value.trim();
         const password = document.getElementById('password').value;
 
-        if (!username || !password) {
-            this.showError('사용자명과 비밀번호를 입력해주세요.');
+        if (!email || !password) {
+            this.showError('이메일과 비밀번호를 입력해주세요.');
             return;
         }
 
-        // 사용자 데이터 가져오기
-        const users = JSON.parse(localStorage.getItem('chessUsers'));
-
-        // 사용자 확인
-        const user = users[username];
-        if (!user) {
-            this.showError('사용자명 또는 비밀번호가 올바르지 않습니다.');
-            return;
-        }
-
-        // 비밀번호 확인
-        const passwordHash = this.hashPassword(password);
-        if (user.passwordHash !== passwordHash) {
-            this.showError('사용자명 또는 비밀번호가 올바르지 않습니다.');
-            return;
-        }
-
-        // 로그인 성공
-        this.currentUser = {
-            username: username,
-            loginTime: new Date().toISOString()
-        };
-        localStorage.setItem('chessSession', JSON.stringify(this.currentUser));
-
-        this.showSuccess('로그인 성공!');
-        setTimeout(() => {
-            this.showGame();
-        }, 500);
-    }
-
-    logout() {
-        if (confirm('정말 로그아웃하시겠습니까?')) {
-            this.currentUser = null;
-            localStorage.removeItem('chessSession');
-            this.showLoginModal();
+        try {
+            // Firebase SDK 동적 로드
+            const { signInWithEmailAndPassword } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js");
             
-            // 폼 초기화
-            document.getElementById('auth-form').reset();
-            document.getElementById('error-message').classList.remove('show');
+            // Firebase 로그인
+            await signInWithEmailAndPassword(window.auth, email, password);
+
+            this.showSuccess('로그인 성공!');
+            
+            // onAuthStateChanged가 자동으로 호출되어 게임 화면 표시
+        } catch (error) {
+            let errorMessage = '로그인 중 오류가 발생했습니다.';
+            
+            switch (error.code) {
+                case 'auth/user-not-found':
+                case 'auth/wrong-password':
+                case 'auth/invalid-credential':
+                    errorMessage = '이메일 또는 비밀번호가 올바르지 않습니다.';
+                    break;
+                case 'auth/invalid-email':
+                    errorMessage = '올바른 이메일 주소를 입력해주세요.';
+                    break;
+                case 'auth/user-disabled':
+                    errorMessage = '비활성화된 계정입니다.';
+                    break;
+                default:
+                    errorMessage = error.message || errorMessage;
+            }
+            
+            this.showError(errorMessage);
         }
     }
 
-    validateSession(userData) {
-        if (!userData || !userData.username) return false;
+    async logout() {
+        if (confirm('정말 로그아웃하시겠습니까?')) {
+            try {
+                const { signOut } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js");
+                await signOut(window.auth);
+                
+                this.currentUser = null;
+                this.showLoginModal();
+                
+                // 폼 초기화
+                document.getElementById('auth-form').reset();
+                document.getElementById('error-message').classList.remove('show');
+            } catch (error) {
+                this.showError('로그아웃 중 오류가 발생했습니다.');
+            }
+        }
+    }
 
-        const users = JSON.parse(localStorage.getItem('chessUsers'));
-        return !!users[userData.username];
+    isValidEmail(email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return emailRegex.test(email);
+    }
+
+    async initializeUserStats(uid) {
+        try {
+            const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
+            const userStatsRef = doc(window.db, 'users', uid);
+            
+            await setDoc(userStatsRef, {
+                trophies: 0,
+                wins: 0,
+                losses: 0,
+                draws: 0,
+                createdAt: new Date().toISOString()
+            }, { merge: true });
+        } catch (error) {
+            console.error('사용자 통계 초기화 오류:', error);
+        }
     }
 
     showError(message) {
@@ -262,7 +299,8 @@ class AuthSystem {
         
         // 사용자명 표시
         if (this.currentUser) {
-            document.getElementById('user-name').textContent = `안녕하세요, ${this.currentUser.username}님!`;
+            const displayName = this.currentUser.displayName || this.currentUser.email?.split('@')[0] || '사용자';
+            document.getElementById('user-name').textContent = `안녕하세요, ${displayName}님!`;
         }
 
         // 게임 초기화 (이미 초기화되어 있으면 재초기화하지 않음)
@@ -279,6 +317,11 @@ class AuthSystem {
     }
 }
 
-// 인증 시스템 초기화
-const auth = new AuthSystem();
-
+// 인증 시스템 초기화 (Firebase 로드 후)
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        window.authSystem = new AuthSystem();
+    });
+} else {
+    window.authSystem = new AuthSystem();
+}
