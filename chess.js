@@ -57,11 +57,11 @@ class ChessGame {
         return board;
     }
 
-    init() {
+    async init() {
         this.renderBoard();
         this.updateGameInfo();
         this.updateTimers();
-        this.loadUserStats();
+        await this.loadUserStats();
         document.getElementById('reset-btn').addEventListener('click', () => this.reset());
         this.startTimer();
     }
@@ -619,49 +619,52 @@ class ChessGame {
     }
 
     // 게임 종료 처리 및 트로피 시스템
-    handleGameEnd(winner) {
+    async handleGameEnd(winner) {
         if (!winner) {
             // 무승부는 트로피 없음
             return;
         }
 
         // 현재 로그인한 사용자 확인
-        const currentUser = typeof auth !== 'undefined' ? auth.getCurrentUser() : null;
-        if (!currentUser) return;
+        const currentUser = typeof window.authSystem !== 'undefined' ? window.authSystem.getCurrentUser() : null;
+        if (!currentUser || !currentUser.uid) return;
 
-        const username = currentUser.username;
+        const uid = currentUser.uid;
         
-        // 사용자 통계 가져오기
-        const userStats = JSON.parse(localStorage.getItem('chessUserStats') || '{}');
-        
-        if (!userStats[username]) {
-            userStats[username] = {
-                trophies: 0,
-                wins: 0,
-                losses: 0,
-                draws: 0
-            };
-        }
-
-        // 승리 처리
-        // 단일 플레이어 모드에서는 사용자가 흰색을 플레이한다고 가정
-        // 흰색이 이기면 사용자가 승리한 것으로 처리
-        if (winner === 'white') {
-            userStats[username].wins++;
-            userStats[username].trophies += 15; // 승리 시 트로피 15개 추가
+        try {
+            // Firestore에서 사용자 통계 가져오기
+            const { doc, getDoc, setDoc, increment } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
+            const userStatsRef = doc(window.db, 'users', uid);
+            const userStatsSnap = await getDoc(userStatsRef);
             
-            // 트로피 획득 알림
-            this.showTrophyNotification(10);
-        } else {
-            // 검은색이 이기면 패배
-            userStats[username].losses++;
+            // 승리 처리
+            // 단일 플레이어 모드에서는 사용자가 흰색을 플레이한다고 가정
+            // 흰색이 이기면 사용자가 승리한 것으로 처리
+            if (winner === 'white') {
+                const trophiesToAdd = 15;
+                await setDoc(userStatsRef, {
+                    wins: increment(1),
+                    trophies: increment(trophiesToAdd),
+                    lastUpdated: new Date().toISOString()
+                }, { merge: true });
+                
+                // 트로피 획득 알림
+                this.showTrophyNotification(trophiesToAdd);
+            } else {
+                // 검은색이 이기면 패배
+                await setDoc(userStatsRef, {
+                    losses: increment(1),
+                    lastUpdated: new Date().toISOString()
+                }, { merge: true });
+            }
+            
+            // UI 업데이트
+            await this.loadUserStats();
+        } catch (error) {
+            console.error('통계 저장 오류:', error);
+            // 오류 발생 시에도 UI는 업데이트
+            this.loadUserStats();
         }
-
-        // 통계 저장
-        localStorage.setItem('chessUserStats', JSON.stringify(userStats));
-        
-        // UI 업데이트
-        this.loadUserStats();
     }
 
     showTrophyNotification(trophies) {
@@ -683,17 +686,33 @@ class ChessGame {
         }, 3000);
     }
 
-    loadUserStats() {
-        const currentUser = typeof auth !== 'undefined' ? auth.getCurrentUser() : null;
-        if (!currentUser) return;
+    async loadUserStats() {
+        const currentUser = typeof window.authSystem !== 'undefined' ? window.authSystem.getCurrentUser() : null;
+        if (!currentUser || !currentUser.uid) {
+            document.getElementById('user-trophies').textContent = '0';
+            document.getElementById('user-wins').textContent = '0';
+            return;
+        }
 
-        const username = currentUser.username;
-        const userStats = JSON.parse(localStorage.getItem('chessUserStats') || '{}');
+        const uid = currentUser.uid;
         
-        if (userStats[username]) {
-            document.getElementById('user-trophies').textContent = userStats[username].trophies || 0;
-            document.getElementById('user-wins').textContent = userStats[username].wins || 0;
-        } else {
+        try {
+            // Firestore에서 사용자 통계 가져오기
+            const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
+            const userStatsRef = doc(window.db, 'users', uid);
+            const userStatsSnap = await getDoc(userStatsRef);
+            
+            if (userStatsSnap.exists()) {
+                const userStats = userStatsSnap.data();
+                document.getElementById('user-trophies').textContent = userStats.trophies || 0;
+                document.getElementById('user-wins').textContent = userStats.wins || 0;
+            } else {
+                document.getElementById('user-trophies').textContent = '0';
+                document.getElementById('user-wins').textContent = '0';
+            }
+        } catch (error) {
+            console.error('통계 로드 오류:', error);
+            // 오류 발생 시 기본값 표시
             document.getElementById('user-trophies').textContent = '0';
             document.getElementById('user-wins').textContent = '0';
         }
