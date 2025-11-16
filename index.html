@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>체스 게임</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- 로그인 모달 -->
+    <div id="login-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">로그인</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="error-message" class="error-message"></div>
+                <form id="auth-form">
+                    <div class="form-group">
+                        <label for="username">사용자명</label>
+                        <input type="text" id="username" name="username" required autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">비밀번호</label>
+                        <input type="password" id="password" name="password" required autocomplete="current-password">
+                    </div>
+                    <div class="form-group" id="confirm-password-group" style="display: none;">
+                        <label for="confirm-password">비밀번호 확인</label>
+                        <input type="password" id="confirm-password" name="confirm-password" autocomplete="new-password">
+                    </div>
+                    <button type="submit" id="submit-btn" class="btn-primary">로그인</button>
+                </form>
+                <div class="auth-switch">
+                    <p id="switch-text">계정이 없으신가요? <a href="#" id="switch-link">회원가입</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 게임 컨테이너 (로그인 후 표시) -->
+    <div class="container" id="game-container" style="display: none;">
+        <div class="user-info">
+            <span id="user-name"></span>
+            <button id="logout-btn" class="btn-logout">로그아웃</button>
+        </div>
+        <h1>체스 게임</h1>
+        <div class="user-stats">
+            <div class="stat-item">
+                <span class="stat-label">트로피</span>
+                <span class="stat-value" id="user-trophies">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">승리</span>
+                <span class="stat-value" id="user-wins">0</span>
+            </div>
+        </div>
+        <div class="timer-container">
+            <div class="timer-box white-timer">
+                <div class="timer-label">흰색</div>
+                <div class="timer-display" id="white-timer">10:00</div>
+            </div>
+            <div class="timer-box black-timer">
+                <div class="timer-label">검은색</div>
+                <div class="timer-display" id="black-timer">10:00</div>
+            </div>
+        </div>
+        <div class="game-info">
+            <div class="current-player">
+                <span id="current-turn">흰색 차례</span>
+            </div>
+            <div class="game-status">
+                <span id="game-status"></span>
+            </div>
+        </div>
+        <div id="chess-board"></div>
+        <div class="controls">
+            <button id="reset-btn">게임 다시 시작</button>
+        </div>
+        <div class="move-history">
+            <h3>이동 기록</h3>
+            <div id="move-list"></div>
+        </div>
+    </div>
+    <script src="auth.js"></script>
+    <script src="chess.js"></script>
+</body>
+</html>
+
